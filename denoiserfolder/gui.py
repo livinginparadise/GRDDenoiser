@@ -614,6 +614,85 @@ class RestorationModel:
         return float(max(0.0, min(1.0, value)))
 
 
+class SettingsManager:
+    """Manages application settings and remembered paths."""
+    
+    def __init__(self) -> None:
+        self.config_dir = Path.home() / ".config" / "batch_denoiser"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.config_file = self.config_dir / "settings.json"
+        self.settings = self._load_settings()
+    
+    def _load_settings(self) -> Dict[str, Any]:
+        """Load settings from JSON file."""
+        if self.config_file.exists():
+            try:
+                return json.loads(self.config_file.read_text())
+            except (json.JSONDecodeError, IOError):
+                return self._default_settings()
+        return self._default_settings()
+    
+    def _default_settings(self) -> Dict[str, Any]:
+        """Return default settings."""
+        return {
+            "last_checkpoint_dir": str(Path.home()),
+            "last_image_dir": str(Path.home()),
+            "last_folder_dir": str(Path.home()),
+            "last_output_dir": str(Path.home()),
+        }
+    
+    def save_settings(self) -> None:
+        """Save settings to JSON file."""
+        try:
+            self.config_file.write_text(json.dumps(self.settings, indent=2))
+        except IOError:
+            pass
+    
+    def get_last_checkpoint_dir(self) -> str:
+        """Get last checkpoint directory."""
+        path_str = self.settings.get("last_checkpoint_dir", str(Path.home()))
+        path = Path(path_str)
+        return str(path) if path.exists() else str(Path.home())
+    
+    def set_last_checkpoint_dir(self, path: Path) -> None:
+        """Set last checkpoint directory."""
+        self.settings["last_checkpoint_dir"] = str(path.parent)
+        self.save_settings()
+    
+    def get_last_image_dir(self) -> str:
+        """Get last image selection directory."""
+        path_str = self.settings.get("last_image_dir", str(Path.home()))
+        path = Path(path_str)
+        return str(path) if path.exists() else str(Path.home())
+    
+    def set_last_image_dir(self, path: Path) -> None:
+        """Set last image selection directory."""
+        self.settings["last_image_dir"] = str(path.parent)
+        self.save_settings()
+    
+    def get_last_folder_dir(self) -> str:
+        """Get last folder selection directory."""
+        path_str = self.settings.get("last_folder_dir", str(Path.home()))
+        path = Path(path_str)
+        return str(path) if path.exists() else str(Path.home())
+    
+    def set_last_folder_dir(self, path: Path) -> None:
+        """Set last folder selection directory."""
+        self.settings["last_folder_dir"] = str(path)
+        self.save_settings()
+    
+    def get_last_output_dir(self) -> str:
+        """Get last output directory."""
+        path_str = self.settings.get("last_output_dir", str(Path.home()))
+        path = Path(path_str)
+        return str(path) if path.exists() else str(Path.home())
+    
+    def set_last_output_dir(self, path: Path) -> None:
+        """Set last output directory."""
+        self.settings["last_output_dir"] = str(path)
+        self.save_settings()
+
+
 def iter_images(path: Path) -> Iterable[Path]:
     if path.is_file():
         return [path]
@@ -634,6 +713,7 @@ class BatchDenoiseWindow(QtWidgets.QWidget):
         self.queue: queue.Queue = queue.Queue()
         self.worker_thread: threading.Thread | None = None
         self.restorer = RestorationModel()
+        self.settings_manager = SettingsManager()
 
         self._input_paths: List[str] = []
         self._input_keys: set[str] = set()
@@ -1045,29 +1125,34 @@ class BatchDenoiseWindow(QtWidgets.QWidget):
         return os.path.normcase(str(normalized))
 
     def _select_checkpoint(self) -> None:
+        initial_dir = self.settings_manager.get_last_checkpoint_dir()
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             "Select checkpoint",
-            str(Path.home()),
+            initial_dir,
             "Checkpoints (*.pt *.safetensors);;PyTorch (*.pt);;Safetensors (*.safetensors);;All files (*.*)",
         )
         if filename:
             self.checkpoint_edit.setText(filename)
+            self.settings_manager.set_last_checkpoint_dir(Path(filename))
 
     def _select_output(self) -> None:
+        initial_dir = self.settings_manager.get_last_output_dir()
         directory = QtWidgets.QFileDialog.getExistingDirectory(
             self,
             "Select output folder",
-            str(Path.home()),
+            initial_dir,
         )
         if directory:
             self.output_edit.setText(directory)
+            self.settings_manager.set_last_output_dir(Path(directory))
 
     def _add_images(self) -> None:
+        initial_dir = self.settings_manager.get_last_image_dir()
         files, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self,
             "Select images",
-            str(Path.home()),
+            initial_dir,
             "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff);;All files (*.*)",
         )
         added = False
@@ -1079,14 +1164,17 @@ class BatchDenoiseWindow(QtWidgets.QWidget):
             self._input_keys.add(key)
             self._input_paths.append(str(self._normalize_path(path_obj)))
             added = True
+            if added:
+                self.settings_manager.set_last_image_dir(path_obj)
         if added:
             self._update_input_list()
 
     def _add_folder(self) -> None:
+        initial_dir = self.settings_manager.get_last_folder_dir()
         directory = QtWidgets.QFileDialog.getExistingDirectory(
             self,
             "Select folder",
-            str(Path.home()),
+            initial_dir,
         )
         if not directory:
             return
@@ -1096,6 +1184,7 @@ class BatchDenoiseWindow(QtWidgets.QWidget):
             return
         self._input_keys.add(key)
         self._input_paths.append(str(self._normalize_path(path_obj)))
+        self.settings_manager.set_last_folder_dir(path_obj)
         self._update_input_list()
 
     def _remove_selected(self) -> None:
